@@ -1,4 +1,11 @@
+# macOS Finder metadata
 .DS_Store
-~.xlsx
+
+# Excel lock files
+~$*.xlsx
+
+# Raw JSON dumps
 ctgov_sample*.json
+
+# Whole folder of raw downloads
 data/raw/
