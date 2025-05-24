@@ -9,3 +9,4 @@ ctgov_sample*.json
 
 # Whole folder of raw downloads
 data/raw/
+ctgov_sample*.json
