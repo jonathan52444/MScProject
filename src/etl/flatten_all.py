@@ -1,3 +1,7 @@
+"""
+flatten_all.py
+"""
+
 import sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.append(str(ROOT))  

@@ -1,3 +1,8 @@
+"""
+pull_all.py
+"""
+
+
 import requests, json, gzip, pathlib, datetime as dt, tqdm
 
 BASE = "https://clinicaltrials.gov/api/v2/studies"
