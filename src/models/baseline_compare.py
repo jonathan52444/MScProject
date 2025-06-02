@@ -28,8 +28,8 @@ from sklearn.linear_model import LinearRegression
 
 
 ROOT   = pathlib.Path(__file__).resolve().parents[2]
-DATA   = ROOT / "data" / "processed" / "features_v0.parquet"
-FIGDIR = ROOT / "reports" / "figures";  FIGDIR.mkdir(parents=True, exist_ok=True)
+DATA   = ROOT / "data" / "processed" / "features_v1.parquet"
+FIGDIR = ROOT / "reports" / "figures"/ "filtered_data";  FIGDIR.mkdir(parents=True, exist_ok=True)
 MODELD = ROOT / "models";               MODELD.mkdir(exist_ok=True)
 
 df = pd.read_parquet(DATA)
