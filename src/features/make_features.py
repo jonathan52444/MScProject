@@ -35,16 +35,34 @@ def parse_date_any(x):
 # paths
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FLAT = ROOT / "data" / "interim"   / "ctgov_flat.parquet"
-OUT  = ROOT / "data" / "processed" / "features_v0.parquet"
+OUT  = ROOT / "data" / "processed" / "features_v1.parquet"
 OUT.parent.mkdir(parents=True, exist_ok=True)
 
 print("Reading", FLAT)
 df = pq.read_table(FLAT).to_pandas()
+df["# patients"] = pd.to_numeric(df["# patients"], errors="coerce") # make enrolment numeric
+
+# Normalisation
+df.columns = df.columns.str.strip()                                 # trim column names
+df["Primary Completion Type"] = df["Primary Completion Type"].astype(str).str.strip().str.upper()
+df["Overall status"]          = df["Overall status"].astype(str).str.strip().str.upper()
 
 # dates and duration
 df["start_date"]    = df["Study Start Date"].apply(parse_date_any)
 df["complete_date"] = df["Primary Completion Date"].apply(parse_date_any)
 df["duration_days"] = (df["complete_date"] - df["start_date"]).dt.days
+
+TODAY = pd.Timestamp.today().normalize()
+
+# drop rows with missing or future completion dates
+df = df[df["complete_date"].notna() & (df["complete_date"] <= TODAY)]
+
+# keep only Actual primary completion dates
+df = df[df["Primary Completion Type"] == "ACTUAL"]
+
+# keep only truly finished studies
+df = df[df["Overall status"].isin(["COMPLETED", "TERMINATED"])]
+
 
 # phase cleaning
 phase_map = {
@@ -111,10 +129,32 @@ print("  • phase unique values            :", df['phase'].unique()[:10])
 print("────────────────────────────────────────────\n")
 
 
-# final filters
-df = df[df["duration_days"].between(1, 6000)]        # keep duration sanity
+# Filters (duration / start year / enrolment rules)
+
+df = df[
+    (df["duration_days"].between(1, 3650))  # ≤ 10 years
+    & (df["start_date"] >= pd.Timestamp("2000-01-01"))  # starts in 2000+
+    & (df["# patients"] >= 10)  # at least 10 participants
+]
+
 df["phase"] = df["phase"].fillna("Unknown")
+
 
 # save
 pq.write_table(pa.Table.from_pandas(df), OUT)
 print("Features saved →", OUT, "| shape:", df.shape)
+
+
+# ---------------------------------------------------------
+print("Unique values BEFORE filters")
+print("Primary Completion Type →",
+      df["Primary Completion Type"].dropna().unique()[:10])
+print("Overall status         →",
+      df["Overall status"].dropna().unique()[:10])
+print("# rows with complete_date <= today →",
+      ((df["complete_date"].notna()) & (df["complete_date"] <= TODAY)).sum())
+print("# rows with ACTUAL PCT            →",
+      (df["Primary Completion Type"] == "ACTUAL").sum())
+print("# rows with COMPLETED|TERMINATED  →",
+      df["Overall status"].isin(["COMPLETED", "TERMINATED"]).sum())
+# ---------------------------------------------------------
