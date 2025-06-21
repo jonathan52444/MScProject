@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import re
+import ast
 from dateutil import parser
 from sklearn.preprocessing import StandardScaler
 
@@ -61,6 +63,68 @@ def complexity_bucket(n: float | int | None) -> str | float:
     if pd.isna(n):
         return np.nan
     return "Low" if n <= 3 else "Medium" if n <= 6 else "High"
+
+
+def n_elig_criteria(text: str | float | int | None) -> float:
+    """
+    Return the number of discrete eligibility criteria items.
+
+    • Detects lines beginning with *, •, or - (most common bullets on CT.gov)
+    • If no bullet markers are found, falls back to counting non-empty paragraphs
+      separated by blank lines.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return np.nan
+
+    # 1) bullet-style lines -----------------------------------------------
+    bullet_lines = re.findall(r'^[ \t]*[•\*\-][ \t]+', text, flags=re.MULTILINE)
+    if bullet_lines:
+        return float(len(bullet_lines))
+
+    # 2) paragraph-style criteria -----------------------------------------
+    paragraphs = [p for p in re.split(r'\n\s*\n', text) if p.strip()]
+    return float(len(paragraphs))
+
+def count_arm_groups(x):
+    """
+    Return len(x) when x is a list / ndarray, or when x is a stringified list.
+    Otherwise np.nan.
+    """
+    if isinstance(x, (list, np.ndarray)):
+        return float(len(x))
+    if isinstance(x, str) and x.lstrip().startswith("["):
+        try:
+            return float(len(ast.literal_eval(x)))
+        except Exception:
+            return np.nan
+    return np.nan
+
+# ─── therapeutic-area mapping ─────────────────────────────────────────────
+TA_MAP = {
+    "Neoplasms": "Oncology",
+    "Cardiovascular Diseases": "Cardio-Metabolic",
+    "Nervous System Diseases": "CNS / Neurology",
+    "Immune System Diseases": "Immunology",
+    "Respiratory Tract Diseases": "Respiratory",
+    "Musculoskeletal Diseases": "Musculoskeletal",
+    "Infectious Diseases": "Infectious",
+}
+
+def browse_to_ta(branches: Any) -> str:
+    """
+    branches = list OR '|'-joined string like
+      ['Neoplasms', 'Digestive System Diseases']
+    Returns broad TA label for the *first* branch; else 'Other'.
+    """
+    if isinstance(branches, list) and branches:
+        first = str(branches[0])
+    elif isinstance(branches, str) and branches:
+        first = branches.split("|", 1)[0]
+    else:
+        return "Other"
+    return TA_MAP.get(first, "Other")
+
+
 
 
 # ========================
@@ -128,6 +192,18 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
         "Industry",
     )
     df["condition_top"] = df["indication/disease area"].str.split("|").str[0]
+
+    browse_col = "rare, non-rare (established disease area and clear diagnosis criteria)"
+    df["therapeutic_area"] = df[browse_col].apply(browse_to_ta)
+
+
+    df["intervention_type"] = (
+        df["mode of administration (ex. NBE, NCE, iv vs pill)"]
+        .str.split("|")
+        .str[0]
+    )
+
+
     df["intervention_type"] = (
         df["mode of administration (ex. NBE, NCE, iv vs pill)"]
         .str.split("|")
@@ -172,15 +248,8 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
             df[col] = np.nan
 
     # trial arms
-    df["num_arms"] = np.nan
-    cohorts_col = "cohorts (sequential or parallel)"
-    if cohorts_col in df.columns:
-        df["num_arms"] = (
-            df[cohorts_col]
-            .astype(str)
-            .str.contains("sequential", case=False, na=False)
-            .map({True: 2, False: 1})
-        )
+    arm_col = "Number of arms"                      # from your mapping sheet
+    df["num_arms"] = df[arm_col].apply(count_arm_groups).fillna(1.0)
 
     # masking / placebo flags - keep NaN when column absent
     df["masking_flag"] = np.nan
@@ -206,12 +275,13 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
         "Eligibility Criteria: The stringency and number of eligibility criteria for"
         " participants"
     )
-    df["elig_len"] = df.get(elig_col, "").astype(str).str.len()
-    elig_bucket = pd.cut(
-        df["elig_len"],
-        bins=[-1, 2000, 4000, np.inf],
-        labels=[0, 1, 2],
-    ).astype(float)
+
+    elig_col = (
+        "Eligibility Criteria: The stringency and number of eligibility criteria for"
+        " participants"
+    )
+    df["elig_crit_n"] = df.get(elig_col, "").apply(n_elig_criteria)
+
 
     # novelty: leakage-free rolling window 
     df = df.sort_values(["condition_top", "start_date"])
@@ -228,7 +298,6 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     )
 
     df["novelty_score"] = 1 / df["freq_in_window"]
-
 
     # complexity & attractiveness
     df["complexity_score"] = (
@@ -308,7 +377,7 @@ if __name__ == "__main__":
     used_num = [
     "# patients", "country_n", "site_n", "assessments_n", "start_year",
     "novelty_score", "complexity_score", "attractiveness_score",
-    "patients_per_site", "num_arms", "masking_flag", "placebo_flag", "elig_len"
+    "patients_per_site", "num_arms", "masking_flag", "placebo_flag", "elig_crit_n"
 ]
     used_cat = [
     "phase", "sponsor_class", "condition_top",
