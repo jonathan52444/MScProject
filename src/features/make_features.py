@@ -125,8 +125,6 @@ def browse_to_ta(branches: Any) -> str:
     return TA_MAP.get(first, "Other")
 
 
-
-
 # ========================
 # Pipeline
 # ========================
@@ -195,13 +193,6 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
 
     browse_col = "rare, non-rare (established disease area and clear diagnosis criteria)"
     df["therapeutic_area"] = df[browse_col].apply(browse_to_ta)
-
-
-    df["intervention_type"] = (
-        df["mode of administration (ex. NBE, NCE, iv vs pill)"]
-        .str.split("|")
-        .str[0]
-    )
 
 
     df["intervention_type"] = (
@@ -380,7 +371,7 @@ if __name__ == "__main__":
     "patients_per_site", "num_arms", "masking_flag", "placebo_flag", "elig_crit_n"
 ]
     used_cat = [
-    "phase", "sponsor_class", "condition_top",
+    "phase", "sponsor_class", "condition_top", "therapeutic_area"
     "intervention_type", "assessments_complexity", "global_trial"
 ]
 
