@@ -227,7 +227,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
         )
     )
 
-    df["novelty_score"] = 1 / (1 + df["freq_in_window"])
+    df["novelty_score"] = 1 / df["freq_in_window"]
 
 
     # complexity & attractiveness
@@ -267,7 +267,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
 if __name__ == "__main__":
     ROOT = pathlib.Path(__file__).resolve().parents[2]
     FLAT = ROOT / "data" / "interim" / "ctgov_flat.parquet"
-    OUT = ROOT / "data" / "processed" / "features_v2.parquet"
+    OUT = ROOT / "data" / "processed" / "features_v3.parquet"
     OUT.parent.mkdir(parents=True, exist_ok=True)
 
     print("Reading", FLAT)
