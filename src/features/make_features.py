@@ -18,6 +18,7 @@ import re
 import ast
 from dateutil import parser
 from sklearn.preprocessing import StandardScaler
+import pickle
 
 # ========================
 # Helper Functions
@@ -124,6 +125,20 @@ def browse_to_ta(branches: Any) -> str:
         return "Other"
     return TA_MAP.get(first, "Other")
 
+# ─── Complexity-score helper ───────────────────────────────────────────────
+def add_complexity_score(df: pd.DataFrame, model_path: pathlib.Path) -> pd.DataFrame:
+    """
+    Append a 0–100 'complexity_score_100' column using the pre-fit
+    Ridge pipeline stored at `model_path`.
+    """
+    with open(model_path, "rb") as f:
+        obj = pickle.load(f)
+
+    X = obj["pipeline"].named_steps["pre"].transform(df)
+    raw = (X * obj["beta"]).sum(axis=1)
+    df["complexity_score_100"] = 100 * (raw - obj["Smin"]) / (obj["Smax"] - obj["Smin"])
+    return df
+    
 
 # ========================
 # Pipeline
@@ -274,6 +289,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     df["elig_crit_n"] = df.get(elig_col, "").apply(n_elig_criteria)
 
 
+
     # novelty: leakage-free rolling window 
     df = df.sort_values(["condition_top", "start_date"])
 
@@ -290,23 +306,6 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
 
     df["novelty_score"] = 1 / df["freq_in_window"]
 
-    # complexity & attractiveness
-    df["complexity_score"] = (
-        df["assessments_n"].fillna(0)
-        + df["site_n"].fillna(0)
-        + df["country_n"].fillna(0)
-        + df["num_arms"].fillna(0)
-        + 2 * df["masking_flag"].fillna(0)
-        + 2 * df["placebo_flag"].fillna(0)
-        + elig_bucket
-    )
-    df["attractiveness_score"] = df["novelty_score"] / (
-        1
-        + df["complexity_score"].fillna(df["complexity_score"].median())
-        + df["placebo_flag"].fillna(0)
-        + elig_bucket.fillna(elig_bucket.median())
-    )
-
     # patients / site
     df["patients_per_site"] = df["# patients"] / df["site_n"].replace({0: np.nan})
 
@@ -321,6 +320,16 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     df = df[df["# patients"].notna() & (df["# patients"] >= 10)] #Ensure at least 10 participants
     df["phase"] = df["phase"].fillna("Unknown")
 
+
+    # -------------------------------------------------------------------------
+    #  Add published Complexity Score
+    # -------------------------------------------------------------------------
+    MODEL_PKL = (
+    pathlib.Path(__file__).resolve().parents[2]      # ← project root
+    / "data" / "processed" / "complexity_score_artifacts"
+    / "complexity_score_model.pkl"                  # ← correct filename
+    )
+    df = add_complexity_score(df, MODEL_PKL)
     return df.reset_index(drop=True)
 
 
@@ -353,25 +362,20 @@ if __name__ == "__main__":
         features["novelty_score"].max(),
     )
     print(
-        " • attractiveness min / max    :",
-        features["attractiveness_score"].min(),
-        "/",
-        features["attractiveness_score"].max(),
-    )
-    print(
-    " • complexity min / max        :",
-    features["complexity_score"].min(),
+    " • complexity_score_100 min / max :",            # ← label
+    round(features["complexity_score_100"].min(), 2),
     "/",
-    features["complexity_score"].max(),)
+    round(features["complexity_score_100"].max(), 2),
+    )
 
     # at the very end of the CLI block, just before the parquet write
     used_num = [
     "# patients", "country_n", "site_n", "assessments_n", "start_year",
-    "novelty_score", "complexity_score", "attractiveness_score",
-    "patients_per_site", "num_arms", "masking_flag", "placebo_flag", "elig_crit_n"
+    "novelty_score",
+    "patients_per_site", "num_arms", "masking_flag", "placebo_flag", "elig_crit_n","complexity_score_100"
 ]
     used_cat = [
-    "phase", "sponsor_class", "condition_top", "therapeutic_area"
+    "phase", "sponsor_class", "condition_top", "therapeutic_area",
     "intervention_type", "assessments_complexity", "global_trial"
 ]
 
