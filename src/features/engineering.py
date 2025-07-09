@@ -1,8 +1,9 @@
 """
+src/features/engineering.py
 Generate modelling-ready features from ctgov_flat.parquet
 
 Input  : data/interim/ctgov_flat.parquet
-Output : data/processed/features_v3.parquet
+Output : data/processed/features_v4.parquet
 """
 
 from __future__ import annotations
@@ -14,7 +15,10 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from sklearn.preprocessing import StandardScaler  # noqa: F401  (kept for parity)
+from sklearn.preprocessing import StandardScaler 
+import pathlib
+import re             
+from typing import Any
 
 from .helpers import (
     list_len,
@@ -24,14 +28,14 @@ from .helpers import (
     n_elig_criteria,
     count_arm_groups,
     browse_to_ta,
+    age_to_years,
+    count_sites,
+    count_unique_countries,
 )
 from .scoring import add_complexity_score, add_attractiveness_score
 
 
-
-# ---------- Pipeline --------------------------------------------------
-
-
+# Pipeline --------------------------------------------------
 def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     """Return a modelling-ready feature table."""
     df = pq.read_table(flat_path).to_pandas()
@@ -44,6 +48,13 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     )
     df["Overall status"] = df["Overall status"].astype(str).str.strip().str.upper()
 
+    # ------------------------------------------------------------------
+    # Location-based counts  →  site_n   |   country_n
+    # Extract number of sites
+    df["site_n"] = df["# sites"].apply(count_sites)
+
+    # Extract number of unique countries
+    df["country_n"] = df["# sites"].apply(count_unique_countries)
     # dates
     df["start_date"] = df["Study Start Date"].apply(parse_date_any)
     df["complete_date"] = df["Primary Completion Date"].apply(parse_date_any)
@@ -105,27 +116,15 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
         .str[0]
     )
 
-    site_col = "# sites"
-    df["site_n"] = df[site_col].apply(count_any)
-
-    # Fallback for removed “geographies” column
-    geo_col = (
-        "# geographies - global, regions involved, single country"
-        " (consider start-up timings by country)"
-    )
-    if geo_col in df.columns:
-        df["country_n"] = df[geo_col].apply(count_any)
-    else:
-        df["country_n"] = df["site_n"]
-
-    # outcomes / endpoints
-    df["primary_out_n"] = df["primary_outcomes"].apply(list_len).fillna(0)
-    df["secondary_out_n"] = df["secondary_outcomes"].apply(list_len).fillna(0)
-    df["other_out_n"] = df["other_outcomes"].apply(list_len).fillna(0)
+    # outcomes / endpoints  (use count_any not list_len)
+    df["primary_out_n"]   = df["primary_outcomes"].apply(count_any).fillna(0)
+    df["secondary_out_n"] = df["secondary_outcomes"].apply(count_any).fillna(0)
+    df["other_out_n"]     = df["other_outcomes"].apply(count_any).fillna(0)
 
     df["assessments_n"] = (
         df["primary_out_n"] + df["secondary_out_n"] + df["other_out_n"]
     )
+
     df["assessments_complexity"] = df["assessments_n"].apply(complexity_bucket)
     df.drop(columns=["primary_out_n", "secondary_out_n", "other_out_n"], inplace=True)
 
@@ -138,15 +137,44 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     arm_col = "Number of arms"
     df["num_arms"] = df[arm_col].apply(count_arm_groups).fillna(1.0)
 
-    # masking / placebo flags
-    df["masking_flag"] = np.nan
+    # ── Masking / placebo ────────────────────────────────────────────────
     if "mask level" in df.columns:
-        df["masking_flag"] = (
+        level_map = {
+            "none":        "None",
+            "open label":  "None",
+            "single":      "Single",
+            "double":      "Double",
+            "triple":      "Triple",
+            "quadruple":   "Quadruple",
+        }
+
+        # extract first match of any keyword above
+        df["masking_level"] = (
             df["mask level"]
             .astype(str)
-            .str.contains("mask", case=False, na=False)
-            .astype(int)
+            .str.extract(
+                r"(none|open label|single|double|triple|quadruple)",
+                flags=re.I,
+                expand=False,
+            )
+            .str.lower()
+            .map(level_map)
+            .fillna("Other")
         )
+    else:
+        df["masking_level"] = "Unknown"
+
+    df["masking_level"] = pd.Categorical(
+        df["masking_level"],
+        categories=["None", "Single", "Double", "Triple", "Quadruple", "Other", "Unknown"],
+        ordered=True,
+    )
+    mask_levels_with_blinding = ["Single", "Double", "Triple", "Quadruple"]
+
+    df["masking_flag"] = (
+        df["masking_level"].isin(mask_levels_with_blinding)
+        & df["masking_level"].notna()
+    ).astype(int)
 
     df["placebo_flag"] = np.nan
     if "placebo included" in df.columns:
@@ -184,6 +212,101 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
 
     df["novelty_score"] = 1 / df["freq_in_window"]
 
+    
+    # Disease-modifying vs symptomatic treatment
+    df["disease_modifying_flag"] = (
+        df["disease modifying or treating symptoms"]
+        .astype(str)
+        .str.contains("modif", case=False, na=False)
+        .astype(int)
+    )
+
+    # Adult / paediatric population
+    pop_map = {
+        "adults":  "Adult",
+        "peds":    "Pediatric",
+        "both":    "Mixed",
+        "mixed":   "Mixed",
+    }
+    df["population_class"] = (
+        df["population - adults vs peds"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+        .map(pop_map)
+        .fillna("Unknown")
+    )
+    df["population_class"] = pd.Categorical(
+        df["population_class"],
+        categories=["Adult", "Pediatric", "Mixed", "Unknown"]
+    )
+
+    # Cohort design
+    df["cohort_design"] = (
+        df["cohorts (sequential or parallel)"]
+        .astype(str)
+        .str.lower()
+        .map(lambda s: "Sequential" if "seq" in s
+             else "Parallel" if "par" in s
+             else "Other")
+    )
+    df["cohort_design"] = pd.Categorical(
+        df["cohort_design"], categories=["Parallel", "Sequential", "Other"]
+    )
+
+    # Safety cuts / DMCs
+    yes_pat = r"true"
+    df["safety_cuts_flag"] = (
+    df["safety cuts, DMCs"]
+    .astype(str)
+    .str.contains(yes_pat, case=False, na=False)
+    .astype(int)
+)
+
+    # Study type
+    df["study_type"] = (
+        df["study type"].astype(str).str.strip().str.title().replace("", np.nan)
+    )
+    df["study_type"] = pd.Categorical(df["study_type"])
+
+    # Age windows
+    from .helpers import age_to_years                # NEW IMPORT
+    df["age_min"]   = df["minimum age"].apply(age_to_years)
+    df["age_max"]   = df["maximum age"].apply(age_to_years)
+    df["age_range"] = df["age_max"] - df["age_min"]
+
+    # Randomisation
+    alloc_map = {
+        "RANDOMISED":       "Randomized",
+        "RANDOMIZED":       "Randomized",
+        "NON-RANDOMISED":   "Non-Randomized",
+        "NON-RANDOMIZED":   "Non-Randomized",
+    }
+    df["allocation"] = (
+        df["Allocation (Randomised / Non-randomised)"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .map(alloc_map)
+        .fillna("Unknown")
+    )
+    df["randomized_flag"] = (df["allocation"] == "Randomized").astype(int)
+
+    # FDA oversight flags
+    yes_pat = r"yes|true|1"
+    df["fda_drug_flag"] = (
+        df["FDA-regulated drug"]
+        .astype(str)
+        .str.contains(yes_pat, case=False, na=False)
+        .astype(int)
+    )
+    df["fda_device_flag"] = (
+        df["FDA-regulated device"]
+        .astype(str)
+        .str.contains(yes_pat, case=False, na=False)
+        .astype(int)
+    )
+
     # patients / site
     df["patients_per_site"] = df["# patients"] / df["site_n"].replace({0: np.nan})
 
@@ -198,7 +321,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     df = df[df["# patients"].notna() & (df["# patients"] >= 10)]
     df["phase"] = df["phase"].fillna("Unknown")
 
-    #  ---------- Add Complexity Score (From BCG paper) ----------
+    # Complexity Score (BCG Paper)
     MODEL_PKL = (
         pathlib.Path(__file__).resolve().parents[2]
         / "data"
@@ -208,7 +331,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     )
     df = add_complexity_score(df, MODEL_PKL)
 
-    #  ---------- Add Attractiveness Score ----------
+    #  Attractivness SCore 
     ATTR_PKL = (
         pathlib.Path(__file__).resolve().parents[2]
         / "data"
@@ -218,4 +341,18 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     )
     df = add_attractiveness_score(df, ATTR_PKL)
 
+    binary_cols = [
+    "fda_drug_flag", "fda_device_flag",
+    "placebo_flag", "randomized_flag",
+    "safety_cuts_flag",
+]
+
+    for col in binary_cols:
+        # ensure 0/1 then cast to an ordered categorical
+        df[col] = pd.Categorical(
+            df[col].fillna(0).astype(int), categories=[0, 1], ordered=True
+        )
+    df[["age_min", "age_max", "age_range"]] = df[["age_min", "age_max", "age_range"]].apply(
+    pd.to_numeric, errors="coerce"
+)
     return df.reset_index(drop=True)
