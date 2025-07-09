@@ -1,31 +1,20 @@
 from __future__ import annotations
 
-"""helpers.py
+"""
+src/features/helpers.py
 
-Pure utility functions used throughout the feature-engineering pipeline for
-ClinicalTrials.gov flat tables.
-
-Functions
----------
-list_len          - Robust length for lists or pipe-delimited strings
-parse_date_any    - Fuzzy but deterministic date parser
-count_any         - Generic cardinality helper for many container types
-complexity_bucket - Map assessment count → "Low|Medium|High"
-n_elig_criteria   - Count bullet/paragraph items in Eligibility Criteria
-count_arm_groups  - Len for list or stringified JSON list
-browse_to_ta      - Map CT.gov branch → broad Therapeutic Area label
+Utility functions used in feature engineering pipeline for ClinicalTrials.gov flat tables.
 """
 
 
-import ast
+import ast,json
 import re
-from typing import Any
+from typing import Any, List, Dict 
 
 import numpy as np
 import pandas as pd
 from dateutil import parser
 
-# Small, pure helper functions
 
 def list_len(x: Any) -> int | float:
     """Length of list or pipe-delimited string; else NaN."""
@@ -104,7 +93,6 @@ def count_arm_groups(x: Any) -> float:
 
 
 # Therapeutic-area helpers
-
 TA_MAP: dict[str, str] = {
     "Neoplasms": "Oncology",
     "Cardiovascular Diseases": "Cardio-Metabolic",
@@ -114,7 +102,6 @@ TA_MAP: dict[str, str] = {
     "Musculoskeletal Diseases": "Musculoskeletal",
     "Infectious Diseases": "Infectious",
 }
-
 
 def browse_to_ta(branches: Any) -> str:
     """
@@ -129,3 +116,52 @@ def browse_to_ta(branches: Any) -> str:
     else:
         return "Other"
     return TA_MAP.get(first, "Other")
+
+_age_re = re.compile(r"(?P<num>\d+(?:\.\d+)?)[ ]*(?P<unit>year|yr|month|week|day)s?",
+                     flags=re.I)
+
+
+def age_to_years(x: Any) -> float:
+    """
+    Convert CT.gov “minimum/maximum age” strings to *years* (float).
+
+    Examples
+    --------
+    >>> age_to_years("18 Years")      -> 18
+    >>> age_to_years("6 Months")      -> 0.5
+    >>> age_to_years("N/A")           -> np.nan
+    """
+    if not isinstance(x, str):
+        return np.nan
+    x = x.strip()
+    if not x or x.upper().startswith("N/A"):
+        return np.nan
+    m = _age_re.search(x)
+    if not m:
+        return np.nan
+    num = float(m["num"])
+    unit = m["unit"].lower()
+    if unit.startswith("month"):
+        return num / 12
+    if unit.startswith("week"):
+        return num / 52
+    if unit.startswith("day"):
+        return num / 365
+    return num  # years by default
+
+def count_sites(locations):
+    """
+    Count the number of sites from the locations list or array.
+    """
+    if locations is None or (isinstance(locations, (list, np.ndarray)) and len(locations) == 0):
+        return 0
+    return len(locations)
+
+def count_unique_countries(locations):
+    """
+    Count the number of unique countries from the locations list or array.
+    """
+    if locations is None or (isinstance(locations, (list, np.ndarray)) and len(locations) == 0):
+        return 0
+    countries = {loc.get('country', '') for loc in locations if loc.get('country')}
+    return len(countries)
