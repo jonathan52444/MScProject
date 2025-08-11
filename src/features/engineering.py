@@ -17,9 +17,10 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sklearn.preprocessing import StandardScaler 
 import pathlib
+from unidecode import unidecode 
 import re             
 from typing import Any
-
+from pandas import Int8Dtype
 from .helpers import (
     list_len,
     parse_date_any,
@@ -105,10 +106,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     )
     df["condition_top"] = df["indication/disease area"].str.split("|").str[0]
 
-    browse_col = (
-        "rare, non-rare (established disease area and clear diagnosis criteria)"
-    )
-    df["therapeutic_area"] = df[browse_col].apply(browse_to_ta)
+    df["therapeutic_area"] = df["condition_top"].apply(browse_to_ta)    
 
     df["intervention_type"] = (
         df["mode of administration (ex. NBE, NCE, iv vs pill)"]
@@ -212,34 +210,6 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
 
     df["novelty_score"] = 1 / df["freq_in_window"]
 
-    
-    # Disease-modifying vs symptomatic treatment
-    df["disease_modifying_flag"] = (
-        df["disease modifying or treating symptoms"]
-        .astype(str)
-        .str.contains("modif", case=False, na=False)
-        .astype(int)
-    )
-
-    # Adult / paediatric population
-    pop_map = {
-        "adults":  "Adult",
-        "peds":    "Pediatric",
-        "both":    "Mixed",
-        "mixed":   "Mixed",
-    }
-    df["population_class"] = (
-        df["population - adults vs peds"]
-        .astype(str)
-        .str.strip()
-        .str.lower()
-        .map(pop_map)
-        .fillna("Unknown")
-    )
-    df["population_class"] = pd.Categorical(
-        df["population_class"],
-        categories=["Adult", "Pediatric", "Mixed", "Unknown"]
-    )
 
     # Cohort design
     df["cohort_design"] = (
@@ -271,9 +241,69 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
 
     # Age windows
     from .helpers import age_to_years                # NEW IMPORT
-    df["age_min"]   = df["minimum age"].apply(age_to_years)
-    df["age_max"]   = df["maximum age"].apply(age_to_years)
+    df["age_min"] = df["minimum age"].apply(age_to_years)
+    df["age_max"] = df["maximum age"].apply(age_to_years)
+
+    # 1) treat 0 as “not specified”
+    df.loc[df["age_max"] == 0, "age_max"] = np.nan
+    df.loc[df["age_min"] == 0, "age_min"] = np.nan
+
+    # 2) swap obvious entry mistakes (min > max)
+    swap_mask = df["age_min"].notna() & df["age_max"].notna() & (df["age_min"] > df["age_max"])
+    df.loc[swap_mask, ["age_min", "age_max"]] = (
+        df.loc[swap_mask, ["age_max", "age_min"]].values
+    )
+
+    # 3) finally compute the range
     df["age_range"] = df["age_max"] - df["age_min"]
+
+
+    # ── Adult / paediatric population ─────────────────────────────────────────
+    # 1) Text-based rules
+    pop_col = df["population - adults vs peds"].astype(str).str.lower()
+
+    # keyword flags (vectorised, fast)
+    is_adult_kw  = pop_col.str.contains(r"\badult\b",                na=False)
+    is_child_kw  = pop_col.str.contains(r"\b(?:child|p(?:a|e)diat|peds?)\b", na=False)
+    is_mixed_kw  = (
+        pop_col.str.contains(r"\b(?:both|mixed)\b", na=False) |
+        (is_adult_kw & is_child_kw)                 # mentions both groups
+    )
+
+    df["population_class"] = np.select(
+        [is_mixed_kw, is_adult_kw, is_child_kw],
+        ["Mixed",     "Adult",     "Pediatric"],
+        default="Unknown",
+    )
+
+    # 2) Age-based fallback (only for remaining “Unknown” rows) ---------------
+    need_fallback = df["population_class"] == "Unknown"
+
+    age_min = df["age_min"]
+    age_max = df["age_max"]
+
+    df.loc[
+        need_fallback & age_min.notna() & age_max.notna()
+        & (age_min < 18) & (age_max >= 18),
+        "population_class"
+    ] = "Mixed"
+
+    df.loc[
+        need_fallback & age_min.notna() & (age_min >= 18),
+        "population_class"
+    ] = "Adult"
+
+    df.loc[
+        need_fallback & age_max.notna() & (age_max < 18),
+        "population_class"
+    ] = "Pediatric"
+
+    # 3) Categorical dtype with explicit order --------------------------------
+    df["population_class"] = pd.Categorical(
+        df["population_class"],
+        categories=["Adult", "Pediatric", "Mixed", "Unknown"]
+    )
+
 
     # Randomisation
     alloc_map = {
@@ -346,7 +376,6 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     "placebo_flag", "randomized_flag",
     "safety_cuts_flag",
 ]
-
     for col in binary_cols:
         # ensure 0/1 then cast to an ordered categorical
         df[col] = pd.Categorical(

@@ -179,7 +179,6 @@ for left_out in tqdm(ALL_COLS, desc="Ablation", unit="feature"):
 #  Save results & plot 
 
 results = pd.DataFrame(metrics).sort_values("MAE", ascending=False)
-
 out_csv = FIGDIR / "ablation_rf_metrics.csv"
 results.to_csv(out_csv, index=False)
 print("Saved metrics →", out_csv)
@@ -193,4 +192,37 @@ plt.title("Random‑Forest ablation & baseline comparison – lower MAE is bette
 plt.tight_layout()
 plt.savefig(FIGDIR / "ablation_rf_mae.png", dpi=150)
 plt.close()
-print("Saved chart   →", FIGDIR / "ablation_rf_mae.png")
+
+# 95 % confidence-interval plot 
+if results["left_out"].duplicated().any():          # only meaningful if ran repeats
+    # 1. aggregate mean, SD, n
+    grp = (results
+           .groupby("left_out", as_index=False)
+           .agg(MAE_mean=("MAE", "mean"),
+                SD=("MAE", "std"),
+                n=("MAE", "size")))
+    # 2. 95 % CI half-width = 1.96 × SEM
+    grp["CI95"] = 1.96 * grp["SD"] / np.sqrt(grp["n"])
+    grp.sort_values("MAE_mean", ascending=False, inplace=True)
+
+    # 3. plot bar + error bars
+    plt.figure(figsize=(8, max(6, 0.25 * len(grp))))
+    plt.barh(grp["left_out"],
+             grp["MAE_mean"],
+             xerr=grp["CI95"],
+             capsize=3)
+    plt.xlabel("MAE (years)")
+    plt.xlim(grp["MAE_mean"].min() * 0.95,
+             grp["MAE_mean"].max() * 1.05)
+    plt.ylabel("Feature left out / Model")
+    plt.title("Random-Forest ablation – mean MAE ± 95 % CI")
+    plt.tight_layout()
+
+    ci_png = FIGDIR / "ablation_rf_mae_ci95.png"
+    plt.savefig(ci_png, dpi=150)
+    plt.close()
+    print("Saved 95 % CI chart →", ci_png)
+else:
+    print("Skipped CI plot – only one run per feature (no variance available).")
+
+print("Saved chart→", FIGDIR / "ablation_rf_mae.png")

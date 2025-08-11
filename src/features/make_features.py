@@ -1,4 +1,5 @@
 """
+src/features/make_features.py
 Command-line entry point
 
 Run with:
@@ -8,7 +9,6 @@ Run with:
 from __future__ import annotations
 
 import pathlib
-
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -18,7 +18,7 @@ from .engineering import build_features
 def main() -> None:
     ROOT = pathlib.Path(__file__).resolve().parents[2]
     FLAT = ROOT / "data" / "interim" / "ctgov_flat.parquet"
-    OUT = ROOT / "data" / "processed" / "features_v3.parquet"
+    OUT = ROOT / "data" / "processed" / "features_v4.parquet"
     OUT.parent.mkdir(parents=True, exist_ok=True)
 
     print("Reading", FLAT)
@@ -57,28 +57,46 @@ def main() -> None:
     )
 
     used_num = [
-        "# patients",
-        "country_n",
-        "site_n",
-        "assessments_n",
-        "start_year",
-        "novelty_score",
-        "complexity_score_100",
-        "attractiveness_score_100",
-        "patients_per_site",
-        "num_arms",
-        "masking_flag",
-        "placebo_flag",
-        "elig_crit_n",
+    "# patients",
+    "country_n",
+    "site_n",
+    "assessments_n",
+    "primary_out_n",
+    "secondary_out_n",
+    "other_out_n",
+    "start_date",
+    "patients_per_site",
+    "num_arms",
+    "masking_flag",
+    "placebo_flag",
+    "active_prob",
+    "elig_crit_n",
+    "safety_cuts",
+    "age_min",
+    "age_max",
+    "age_range",
+    "randomized_flag",
+    "fda_drug_flag",
+    "fda_device_flag",
+    "freq_in_window",
+    "novelty_score",
+    "complexity_score_100",
+    "attractiveness_score_100",
     ]
+    
     used_cat = [
-        "phase",
-        "sponsor_class",
-        "condition_top",
-        "therapeutic_area",
-        "intervention_type",
-        "assessments_complexity",
-        "global_trial",
+    "phase",
+    "sponsor_class",
+    "condition_top",
+    "therapeutic_area",
+    "intervention_type",
+    "assessments_complexity",
+    "global_trial",
+    "masking_level",
+    "population_class",
+    "cohort_design",
+    "study_type",
+    "allocation",
     ]
 
     print("Numeric features  ({}): {}".format(len(used_num), ", ".join(used_num)))
@@ -88,6 +106,7 @@ def main() -> None:
 
     pq.write_table(pa.Table.from_pandas(features), OUT)
     print("Features saved →", OUT, "| shape:", features.shape)
+
 
 
 if __name__ == "__main__":

@@ -14,6 +14,8 @@ from typing import Any, List, Dict
 import numpy as np
 import pandas as pd
 from dateutil import parser
+from functools import lru_cache
+from typing import Optional
 
 
 def list_len(x: Any) -> int | float:
@@ -92,62 +94,141 @@ def count_arm_groups(x: Any) -> float:
     return np.nan
 
 
-# Therapeutic-area helpers
-TA_MAP: dict[str, str] = {
-    "Neoplasms": "Oncology",
-    "Cardiovascular Diseases": "Cardio-Metabolic",
-    "Nervous System Diseases": "CNS / Neurology",
-    "Immune System Diseases": "Immunology",
-    "Respiratory Tract Diseases": "Respiratory",
-    "Musculoskeletal Diseases": "Musculoskeletal",
-    "Infectious Diseases": "Infectious",
-}
+# # Therapeutic-area helpers
+# TA_MAP: dict[str, str] = {
+#     "Neoplasms": "Oncology",
+#     "Cardiovascular Diseases": "Cardio-Metabolic",
+#     "Nervous System Diseases": "CNS / Neurology",
+#     "Immune System Diseases": "Immunology",
+#     "Respiratory Tract Diseases": "Respiratory",
+#     "Musculoskeletal Diseases": "Musculoskeletal",
+#     "Infectious Diseases": "Infectious",
+# }
 
-def browse_to_ta(branches: Any) -> str:
+# ---------------- master pattern table (ordered; first match wins) -------
+_PATTERNS = [
+    # Oncology
+    (r"\b(cancer|tumou?r|carcinom|sarcom|lymphom|leukemi|myelom|neoplasm|oncolog|melanom|glioblastom)\b",
+     "Oncology"),
+
+    # Neurology / CNS
+    (r"\b(alzheimer|parkinson|dementia|epileps|seizure|stroke|tbi|migraine|multiple sclerosis|amyotrophic lateral sclerosis|als|huntington|neuropath|meningit|neuro)\b",
+     "Neurology"),
+
+    # Cardiovascular
+    (r"\b(cardio|cardiac|coronar|ischemi|myocard|angina|atrial|ventricular|heart|hypertens|aort|vascular)\b",
+     "Cardiovascular"),
+
+    # Respiratory
+    (r"\b(asthma|copd|bronchi|pulmon|lung|respirat|cystic fibrosis|cf|influenza|covid|pneumon)\b",
+     "Respiratory"),
+
+    # Metabolic & endocrine
+    (r"\b(diabet|obes|metabolic|lipid|cholesterol|dyslipid|hyperlipid|thyroid|hashimoto|graves|parathyroid|pituitar|endocrin)\b",
+     "Metabolic & Endocrine"),
+
+    # Gastro-Hepatology
+    (r"\b(hepatitis|liver|hepat|cirrhos|steatohepat|nafld|nash|crohn|colitis|ibs|ibd|gastroenter)\b",
+     "Gastro-Hepatology"),
+
+    # Renal / Urology
+    (r"\b(kidney|renal|nephro|ckd|esrd|glomerulo|urinar|bladder|prostat|urolog)\b",
+     "Renal & Urology"),
+
+    # Rheumatology
+    (r"\b(arthritis|rheumat|lupus|sj[oö]gren|scleroderma|osteopor|ankylosing spondyl|fibromyalg|musculoskelet)\b",
+     "Rheumatology"),
+
+    # Dermatology
+    (r"\b(psoriasis|eczema|dermatit|acne|rosacea|vitiligo|skin)\b",
+     "Dermatology"),
+
+    # Infectious disease
+    (r"\b(hiv|aids|malaria|tubercul|tb\b|ebola|dengue|zika|chikung|cmv|hsv|herpes|hpv|hpylori|infectious)\b",
+     "Infectious Disease"),
+
+    # Obstetrics / Gynaecology
+    (r"\b(pregnan|obstet|gynaec|gynec|endometrio|preeclamps|ivf|fertilit|uterin|ovarian)\b",
+     "Ob-Gyn"),
+
+    # Mental health / Psychiatry
+    (r"\b(depress|anxi|schizophren|bipolar|psych|adhd|autism|asd|ptsd)\b",
+     "Psychiatry"),
+
+    # Ophthalmology
+    (r"\b(retina|macular|glaucom|ocular|ophthal|uveitis|vision|eye)\b",
+     "Ophthalmology"),
+
+    # Haematology (non-oncology)
+    (r"\b(haemoph|sickle|thalassem|anemi|coagulat|bleeding|platelet|haematolog)\b",
+     "Haematology (non-onc)"),
+
+    # Paediatrics catch-all (keep last)
+    (r"\b(pediatr|paediatr|childhood)\b", "Paediatrics"),
+]
+
+_PAT_COMPILED = [(re.compile(p, re.I), ta) for p, ta in _PATTERNS]
+
+@lru_cache(maxsize=8192)
+def _match_ta(text: str) -> Optional[str]:
+    for rgx, area in _PAT_COMPILED:
+        if rgx.search(text):
+            return area
+    return None
+
+def browse_to_ta(raw: str | None) -> str:
     """
-    branches = list OR '|'-joined string like
-      ['Neoplasms', 'Digestive System Diseases']
-    Returns broad TA label for the *first* branch; else 'Other'.
+    Map a free-text condition string to a therapeutic area.
+    Returns "Other" if no pattern matches.
     """
-    if isinstance(branches, list) and branches:
-        first = str(branches[0])
-    elif isinstance(branches, str) and branches:
-        first = branches.split("|", 1)[0]
-    else:
+    if not raw or not isinstance(raw, str):
         return "Other"
-    return TA_MAP.get(first, "Other")
 
-_age_re = re.compile(r"(?P<num>\d+(?:\.\d+)?)[ ]*(?P<unit>year|yr|month|week|day)s?",
-                     flags=re.I)
+    txt = re.sub(r"[^a-z0-9\s]", " ", raw.lower())
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return _match_ta(txt) or "Other"
+
+
+_age_re  = re.compile(r"(\d+\.?\d*)")               # captures the number
+_unit_re = re.compile(r"(year|month|week|day)s?", re.I)  # captures the unit
 
 
 def age_to_years(x: Any) -> float:
     """
-    Convert CT.gov “minimum/maximum age” strings to *years* (float).
+    Convert CT.gov age strings to years (float).
 
     Examples
     --------
-    >>> age_to_years("18 Years")      -> 18
-    >>> age_to_years("6 Months")      -> 0.5
-    >>> age_to_years("N/A")           -> np.nan
+    >>> age_to_years("18 Years")   -> 18
+    >>> age_to_years("6 Months")   -> 0.5
+    >>> age_to_years("21 Days")    -> 0.06
+    >>> age_to_years("N/A")        -> np.nan
     """
     if not isinstance(x, str):
         return np.nan
-    x = x.strip()
-    if not x or x.upper().startswith("N/A"):
+
+    s = x.strip().lower()
+    if not s or s.startswith("n/a"):
         return np.nan
-    m = _age_re.search(x)
-    if not m:
+
+    # ---------------- number -------------------------------------------------
+    m_val = _age_re.search(s)
+    if not m_val:
         return np.nan
-    num = float(m["num"])
-    unit = m["unit"].lower()
+    value = float(m_val.group(1))                # ▲ <── changed
+
+    # ---------------- unit  --------------------------------------------------
+    m_unit = _unit_re.search(s)
+    unit = m_unit.group(1) if m_unit else "year"   # ▲ <── changed
+
     if unit.startswith("month"):
-        return num / 12
+        return value / 12
     if unit.startswith("week"):
-        return num / 52
+        return value / 52
     if unit.startswith("day"):
-        return num / 365
-    return num  # years by default
+        return value / 365
+    return value            # default = years
+
 
 def count_sites(locations):
     """

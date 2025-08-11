@@ -1,5 +1,5 @@
 """
-flatten_all.py
+src/etl/flatten_all.py
 """
 
 import sys, pathlib

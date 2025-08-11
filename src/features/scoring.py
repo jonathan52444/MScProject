@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-"""scoring.py
+"""
+src/features/scoring.py
 
 Utility functions that append pre‑computed *Complexity* and *Attractiveness*
 model scores to a feature dataframe.

@@ -27,6 +27,8 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.neural_network import MLPRegressor
+from sklearn.dummy import DummyRegressor
 
 
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
@@ -35,7 +37,7 @@ from sklearn.model_selection import TimeSeriesSplit, cross_validate
 import numpy as np   
 
 ROOT   = pathlib.Path(__file__).resolve().parents[2]
-DATA   = ROOT / "data" / "processed" / "features_v2.parquet"
+DATA   = ROOT / "data" / "processed" / "features_v4.parquet"
 FIGDIR = ROOT / "reports" / "figures" / "filtered_data";  FIGDIR.mkdir(parents=True, exist_ok=True)
 MODELD = ROOT / "models";               MODELD.mkdir(exist_ok=True)
 
@@ -43,23 +45,47 @@ df = pd.read_parquet(DATA)
 target = "duration_days"
 
 num_cols = [
-    "# patients", "country_n", "site_n",
-    "assessments_n", "start_year",
-    "novelty_score", "complexity_score", "attractiveness_score",
+    # raw numeric or engineered numeric columns
+    "# patients",
+    "country_n",
+    "site_n",
+    "assessments_n",
+    "start_year",
     "patients_per_site",
-    # add the new numeric helpers
-    "num_arms", "masking_flag", "placebo_flag", "elig_len"
-]
+    "num_arms",
+    "masking_flag",
+    "placebo_flag",
+    "active_prob",
+    "elig_crit_n",
+    "age_min",
+    "age_max",
+    "age_range",
+    "randomized_flag",
+    "fda_drug_flag",
+    "fda_device_flag",
+    "freq_in_window",
+    "novelty_score",
+    "complexity_score_100",
+    "attractiveness_score_100",
+    ]
 
-cat_cols = [
-    "phase", "sponsor_class", "condition_top",
-    "intervention_type", "assessments_complexity",
-    "global_trial"
-]
+cat_cols= [
+# raw or engineered categoricals
+    "phase",
+    "sponsor_class",
+    "condition_top",
+    "therapeutic_area",
+    "intervention_type",
+    "assessments_complexity",
+    "global_trial",
+    "masking_level",
+    "population_class",
+    "cohort_design",
+    "study_type",
+    "allocation",
+    ]
 
-# ========================
-# Temporal Split (Same as TrialDura)
-# ========================
+# ---------- Temporal Split (Same as TrialDura) ------------------------------
 # Training set: trials that START *before* 2019-01-01
 # Test set   : trials that START on/after 2019-01-01
 
@@ -80,12 +106,7 @@ y_train, y_test = y[~is_test], y[is_test]
 # Show split sizes 
 print(f"Training set size : {len(X_train):>7} rows")
 
-
-
-
-# ========================
-# Pre-processor
-# ========================
+# ---------- Pre-processor --------------------------------------------------
 num_pipe = Pipeline([
     ("impute", SimpleImputer(strategy="median")),
     ("scale",  StandardScaler())          # ← new step
@@ -110,26 +131,36 @@ scoring = {
 }
 
 
-# ========================
-# Model zoo
-# ========================
-models = {"LinearRegression": LinearRegression(n_jobs=-1),
+# ---------- Model zoo --------------------------------------------------
+models = {
+    # new baseline
+    "MeanBaseline": DummyRegressor(strategy="mean"),
+
+    # existing models
+    #"LinearRegression": LinearRegression(n_jobs=-1),
     "RandomForest": RandomForestRegressor(
         n_estimators=150, max_depth=None, n_jobs=-1, random_state=42),
-    "GradientBoosting": GradientBoostingRegressor(
-        n_estimators=300, learning_rate=0.05, max_depth=3, random_state=42),
+    #"GradientBoosting": GradientBoostingRegressor(
+        #n_estimators=300, learning_rate=0.05, max_depth=3, random_state=42),
+
+    # MLP model
+    # "MLPRegressor": MLPRegressor(
+    #     hidden_layer_sizes=(64, 32),
+    #     activation="relu",
+    #     solver="adam",
+    #     max_iter=500,
+    #     random_state=42,
+    #     early_stopping=True,
+    # ),
 }
 
 metrics = []
 
-from sklearn.dummy import DummyRegressor
 dummy = DummyRegressor(strategy="mean").fit(X_train, y_train)
 print("Dummy test R²:", r2_score(y_test, dummy.predict(X_test)))
 
 
-# ========================
-# Training and evaluation
-# ========================
+# ---------- Training and evaluation ----------------------------------------
 for name, est in models.items():
     print(f"\n=== {name} ===")
     pipe = Pipeline([("pre", pre), ("model", est)])
