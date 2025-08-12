@@ -58,7 +58,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     df["country_n"] = df["# sites"].apply(count_unique_countries)
     # dates
     df["start_date"] = df["Study Start Date"].apply(parse_date_any)
-    df["complete_date"] = df["Primary Completion Date"].apply(parse_date_any)
+    df["complete_date"] = df["Study Full Completion Date"].apply(parse_date_any) # Fixed: Changed from Primary Completion to Full Completion
     df["duration_days"] = (df["complete_date"] - df["start_date"]).dt.days
     df["start_year"] = df["start_date"].dt.year
 
