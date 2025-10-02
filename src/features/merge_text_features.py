@@ -1,3 +1,14 @@
+"""
+src/features/merge_text_features.py
+Merge HAN text features into a base Parquet table keyed by ClinicalTrials.gov NCT ID.
+
+Intended usage: `--base` should be the engineered features output (e.g.
+data/processed/features_v6.parquet) produced by src.features.make_features.
+This script normalises NCT IDs in both inputs, performs a left-join of the HAN
+feature table onto the base features table, and writes the merged Parquet file
+to --out.
+
+"""
 # src/features/merge_text_features.py
 import argparse, pathlib, pandas as pd
 from src.text._utils import find_col

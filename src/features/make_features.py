@@ -2,8 +2,8 @@
 src/features/make_features.py
 Command-line entry point
 
-Run with:
-    python -m src.features.make_features
+Loads the flattened interim Parquet (data/interim/ctgov_flat.parquet),
+runs feature engineering, prints a short debug summary, and writes the resulting features to `data/processed/features_v6.parquet`.
 """
 
 from __future__ import annotations
