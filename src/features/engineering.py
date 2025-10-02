@@ -42,6 +42,36 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     df = pq.read_table(flat_path).to_pandas()
     df.columns = df.columns.str.strip()
 
+    # Ensure NCT identifier is present as `nct_id`
+    id_variants = {
+        "nct_id", "NCT ID", "NCT_ID", "nctId", "NCTId", "NCT Number", "NCTNumber"
+    }
+    found = next(
+        (
+            c for c in df.columns
+            if (c in id_variants)
+            or (c.lower().replace(" ", "").replace("_", "") in {"nctid", "nctnumber"})
+        ),
+        None,
+    )
+
+    if found:
+        df.rename(columns={found: "nct_id"}, inplace=True)
+        df["nct_id"] = df["nct_id"].astype(str).str.strip().str.upper()
+    else:
+        # best-effort extraction from any URL-like column if present
+        url_like = next((c for c in df.columns if "url" in c.lower()), None)
+        if url_like:
+            df["nct_id"] = (
+                df[url_like]
+                .astype(str)
+                .str.extract(r"(NCT\d{8})", expand=False)
+                .str.upper()
+            )
+        else:
+            df["nct_id"] = pd.NA
+
+
     # Basic Cleanup
     df["# patients"] = pd.to_numeric(df["# patients"], errors="coerce")
     df["Primary Completion Type"] = (
@@ -124,7 +154,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     )
 
     df["assessments_complexity"] = df["assessments_n"].apply(complexity_bucket)
-    df.drop(columns=["primary_out_n", "secondary_out_n", "other_out_n"], inplace=True)
+    # df.drop(columns=["primary_out_n", "secondary_out_n", "other_out_n"], inplace=True)
 
     # placeholders (may be absent in XML flatten)
     for col in ["screen fail rate", "evaluability / drop out rate", "safety events"]:

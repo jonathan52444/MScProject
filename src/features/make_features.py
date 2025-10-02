@@ -18,7 +18,7 @@ from .engineering import build_features
 def main() -> None:
     ROOT = pathlib.Path(__file__).resolve().parents[2]
     FLAT = ROOT / "data" / "interim" / "ctgov_flat.parquet"
-    OUT = ROOT / "data" / "processed" / "features_v4.parquet"
+    OUT = ROOT / "data" / "processed" / "features_v6.parquet"
     OUT.parent.mkdir(parents=True, exist_ok=True)
 
     print("Reading", FLAT)
@@ -38,6 +38,7 @@ def main() -> None:
     )
     print(" • phase unique values         :", features["phase"].unique()[:10])
     print(
+        
         " • novelty min / max           :",
         features["novelty_score"].min(),
         "/",
