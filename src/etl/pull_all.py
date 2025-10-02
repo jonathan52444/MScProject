@@ -1,7 +1,9 @@
 """
-pull_all.py
-"""
+src/etl/pull_all.py
 
+Download all study batches from the ClinicalTrials.gov v2 API and save each API page
+as a gzipped JSON file in data/raw/
+"""
 
 import requests, json, gzip, pathlib, datetime as dt, tqdm
 
