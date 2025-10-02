@@ -1,4 +1,6 @@
-End‑to‑end pipeline to predict **clinical trial duration** from ClinicalTrials.gov data: ETL → feature engineering → (optional) text features via the TrialDura submodule → tree‑based regression with ablation studies and out‑of‑time evaluation. The main regression target is `duration_days`.
+# Forecasting Clinical Trial Duration from Structured and Unstructured Protocol Data
+
+Pipeline to predict **clinical trial duration** from ClinicalTrials.gov data: ETL → feature engineering → random-forest predictor. 
 
 - **Background literature** Relevant literature PDFs for context under `Background Literature/`. 
 - **ETL** scripts for collecting and flattening ClinicalTrials.gov records (`src/etl/…`). 
