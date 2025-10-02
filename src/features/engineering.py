@@ -272,22 +272,22 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
     df["age_min"] = df["minimum age"].apply(age_to_years)
     df["age_max"] = df["maximum age"].apply(age_to_years)
 
-    # 1) treat 0 as “not specified”
+    # treat 0 as “not specified”
     df.loc[df["age_max"] == 0, "age_max"] = np.nan
     df.loc[df["age_min"] == 0, "age_min"] = np.nan
 
-    # 2) swap obvious entry mistakes (min > max)
+    # swap obvious entry mistakes (min > max)
     swap_mask = df["age_min"].notna() & df["age_max"].notna() & (df["age_min"] > df["age_max"])
     df.loc[swap_mask, ["age_min", "age_max"]] = (
         df.loc[swap_mask, ["age_max", "age_min"]].values
     )
 
-    # 3) finally compute the range
+    # finally compute the range
     df["age_range"] = df["age_max"] - df["age_min"]
 
 
     # ── Adult / paediatric population ─────────────────────────────────────────
-    # 1) Text-based rules
+    # Text-based rules
     pop_col = df["population - adults vs peds"].astype(str).str.lower()
 
     # keyword flags (vectorised, fast)
@@ -304,7 +304,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
         default="Unknown",
     )
 
-    # 2) Age-based fallback (only for remaining “Unknown” rows) ---------------
+    # Age-based fallback (only for remaining “Unknown” rows) ---------------
     need_fallback = df["population_class"] == "Unknown"
 
     age_min = df["age_min"]
@@ -326,7 +326,7 @@ def build_features(flat_path: pathlib.Path) -> pd.DataFrame:
         "population_class"
     ] = "Pediatric"
 
-    # 3) Categorical dtype with explicit order --------------------------------
+    # Categorical dtype with explicit order --------------------------------
     df["population_class"] = pd.Categorical(
         df["population_class"],
         categories=["Adult", "Pediatric", "Mixed", "Unknown"]
